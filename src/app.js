@@ -14,6 +14,9 @@ const alumnoRoutes = require('./routes/alumno');
 
 const app = express();
 
+// --- CONFIGURACIÓN PARA RAILWAY (PROXY) ---
+app.set('trust proxy', 1); // <--- ESTA ES LA LÍNEA QUE ARREGLA EL ERROR DEL LOG
+
 // --- CAPA DE SEGURIDAD GLOBAL ---
 app.use(helmet({
     contentSecurityPolicy: false, 
@@ -28,19 +31,17 @@ const limiter = rateLimit({
 });
 app.use('/login', limiter);
 
-// --- CONFIGURACIÓN DE VISTAS (Ajustado para Railway) ---
-// Al estar app.js dentro de src, __dirname apunta a la carpeta src.
+// --- CONFIGURACIÓN DE VISTAS ---
 app.set('view engine', 'pug');
 app.set('views', path.join(__dirname, 'views'));
 
 // --- ARCHIVOS ESTÁTICOS ---
-// Salimos de src para encontrar la carpeta public en la raíz
 app.use(express.static(path.join(__dirname, '../public')));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// --- CONFIGURACIÓN DE SESIÓN (Blindada para la nube) ---
+// --- CONFIGURACIÓN DE SESIÓN ---
 app.use(session({
     secret: process.env.SESSION_SECRET || 'mi_secreto_super_seguro_123',
     resave: false,
@@ -48,7 +49,7 @@ app.use(session({
     cookie: { 
         secure: process.env.NODE_ENV === 'production', 
         httpOnly: true, 
-        sameSite: 'lax', // Cambiado a 'lax' para mejor compatibilidad en despliegues
+        sameSite: 'lax',
         maxAge: 3600000 
     }
 }));
