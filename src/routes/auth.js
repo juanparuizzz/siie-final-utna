@@ -1,84 +1,134 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
+const bcrypt = require('bcrypt');
+const { body, validationResult } = require('express-validator');
 
-// --- VISTA DE LOGIN ---
-router.get('/login', (req, res) => {
-    if (req.session.user) {
-        const { rol } = req.session.user;
-        if (rol === 'admin') return res.redirect('/admin/usuarios');
-        if (rol === 'maestro') return res.redirect('/maestro/dashboard');
-        if (rol === 'alumno') return res.redirect('/alumno/perfil');
+// --- MIDDLEWARE DE VALIDACIÓN ---
+const validate = (req, res, next) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        console.error('❌ Errores de validación:', errors.array());
+        // En lugar de solo un texto, podrías redirigir con error para que no se quede la pantalla en blanco
+        return res.status(400).send('Datos inválidos. Asegúrate de que el correo sea real y la contraseña tenga 6+ caracteres.');
     }
-    res.render('login', { title: 'Iniciar Sesión' });
+    next();
+};
+
+// 1. LISTAR USUARIOS
+router.get('/usuarios', async (req, res) => {
+    try {
+        const [usuarios] = await db.query('SELECT id, nombre, correo, rol, grado, grupo FROM usuarios');
+        const [stats] = await db.query(`
+            SELECT 
+                SUM(CASE WHEN rol = 'admin' THEN 1 ELSE 0 END) as totalAdmins,
+                SUM(CASE WHEN rol = 'maestro' THEN 1 ELSE 0 END) as totalMaestros,
+                SUM(CASE WHEN rol = 'alumno' THEN 1 ELSE 0 END) as totalAlumnos
+            FROM usuarios
+        `);
+
+        res.render('admin/usuarios', { 
+            usuarios, 
+            stats: stats[0] || { totalAdmins: 0, totalMaestros: 0, totalAlumnos: 0 }, 
+            title: 'Gestión de Usuarios' 
+        });
+    } catch (err) {
+        console.error('❌ Error al obtener usuarios:', err);
+        res.status(500).send('Error interno del servidor');
+    }
 });
 
-// --- PROCESO DE LOGIN (COMPARACIÓN DIRECTA) ---
-router.post('/login', async (req, res) => {
-    const correo = req.body.correo ? req.body.correo.trim() : '';
-    const password = req.body.password ? req.body.password.trim() : '';
+// 2. FORMULARIO CREAR
+router.get('/usuarios/crear', (req, res) => {
+    res.render('admin/crear_usuario', { title: 'Registrar Usuario' });
+});
+
+// 3. PROCESO DE GUARDADO (Encriptación Asegurada)
+router.post('/usuarios/guardar', [
+    body('nombre').trim().notEmpty(),
+    body('correo').isEmail().normalizeEmail(),
+    body('password').isLength({ min: 6 }),
+    body('rol').isIn(['admin', 'maestro', 'alumno']),
+    validate
+], async (req, res) => {
+    const { nombre, correo, password, rol, grado, grupo } = req.body;
     
-    console.log("--- INTENTO DE LOGIN ---");
-    console.log("Correo recibido:", correo);
+    // Normalizamos para evitar errores de lógica
+    const rolFinal = rol.toLowerCase().trim();
+    const gradoFinal = (rolFinal === 'admin') ? null : (grado || null);
+    const grupoFinal = (rolFinal === 'admin') ? null : (grupo || 'A');
 
     try {
-        const [rows] = await db.query('SELECT * FROM usuarios WHERE correo = ?', [correo]);
-        
-        if (rows.length === 0) {
-            console.log("❌ RESULTADO: El correo no existe en la base de datos.");
-            return res.redirect('/login?error=user_not_found');
-        }
+        // Encriptamos la contraseña antes de guardar
+        const saltRounds = 10;
+        const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-        const usuario = rows[0];
-        // Convertimos a string y quitamos espacios por si acaso
-        const passDB = usuario.password ? usuario.password.toString().trim() : '';
-
-        console.log("Usuario encontrado en DB:", usuario.correo);
-
-        // COMPARACIÓN DIRECTA: Texto plano contra texto plano
-        if (password === passDB) {
-            console.log("✅ RESULTADO: Contraseña correcta.");
-            
-            // Guardamos el objeto usuario en la sesión
-            req.session.user = {
-                id: usuario.id,
-                nombre: usuario.nombre,
-                correo: usuario.correo,
-                rol: usuario.rol
-            };
-
-            return req.session.save((err) => {
-                if (err) {
-                    console.error("Error al guardar sesión:", err);
-                    return res.redirect('/login?error=server_error');
-                }
-                
-                const rol = usuario.rol;
-                console.log("Redirigiendo al dashboard de:", rol);
-                
-                if (rol === 'admin') return res.redirect('/admin/usuarios');
-                if (rol === 'maestro') return res.redirect('/maestro/dashboard');
-                if (rol === 'alumno') return res.redirect('/alumno/perfil');
-                
-                res.redirect('/');
-            });
-        } else {
-            console.log("❌ RESULTADO: La contraseña no coincide.");
-            // Log de ayuda para ti (puedes quitarlo después de que funcione)
-            console.log(`Debug: Recibido [${password}] vs DB [${passDB}]`);
-            return res.redirect('/login?error=wrong_password');
-        }
+        await db.query(
+            'INSERT INTO usuarios (nombre, correo, password, rol, grado, grupo) VALUES (?, ?, ?, ?, ?, ?)',
+            [nombre, correo, hashedPassword, rolFinal, gradoFinal, grupoFinal]
+        );
+        res.redirect('/admin/usuarios?success=created');
     } catch (err) {
-        console.error("❌ ERROR EN EL LOGIN:", err);
-        res.redirect('/login?error=server_error');
+        console.error('❌ Error al guardar:', err);
+        res.status(500).send('Error al guardar el usuario. ¿Quizás el correo ya existe?');
     }
 });
 
-router.get('/logout', (req, res) => {
-    req.session.destroy(() => {
-        res.clearCookie('connect.sid');
-        res.redirect('/login?logout=success');
-    });
+// 4. FORMULARIO EDITAR
+router.get('/usuarios/editar/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [rows] = await db.query('SELECT * FROM usuarios WHERE id = ?', [id]);
+        if (rows.length > 0) {
+            res.render('admin/editar_usuario', { 
+                usuario: rows[0], 
+                title: 'Editar Usuario' 
+            });
+        } else {
+            res.status(404).send('Usuario no encontrado');
+        }
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Error al cargar datos');
+    }
+});
+
+// 5. ACTUALIZAR (Sin cambiar contraseña por aquí)
+router.post('/usuarios/actualizar/:id', [
+    body('nombre').trim().notEmpty(),
+    body('correo').isEmail().normalizeEmail(),
+    body('rol').isIn(['admin', 'maestro', 'alumno']),
+    validate
+], async (req, res) => {
+    const { id } = req.params;
+    const { nombre, correo, rol, grado, grupo } = req.body;
+    
+    const rolFinal = rol.toLowerCase().trim();
+    const gradoFinal = (rolFinal === 'admin') ? null : (grado || null);
+    const grupoFinal = (rolFinal === 'admin') ? null : (grupo || 'A');
+
+    try {
+        await db.query(
+            'UPDATE usuarios SET nombre = ?, correo = ?, rol = ?, grado = ?, grupo = ? WHERE id = ?',
+            [nombre, correo, rolFinal, gradoFinal, grupoFinal, id]
+        );
+        res.redirect('/admin/usuarios?success=updated');
+    } catch (err) {
+        console.error('❌ Error al actualizar:', err);
+        res.status(500).send('Error al actualizar');
+    }
+});
+
+// 6. ELIMINAR
+router.get('/usuarios/eliminar/:id', async (req, res) => {
+    const { id } = req.params;
+    try {
+        await db.query('DELETE FROM usuarios WHERE id = ?', [id]);
+        res.redirect('/admin/usuarios?success=deleted');
+    } catch (err) {
+        console.error(err);
+        res.status(500).send('Error al eliminar');
+    }
 });
 
 module.exports = router;
