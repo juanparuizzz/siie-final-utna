@@ -17,39 +17,54 @@ router.get('/login', (req, res) => {
 
 router.post('/login', async (req, res) => {
     const { correo, password } = req.body;
+    
+    // LOG DE CONTROL: Para ver qué llega al servidor
+    console.log(`Intentando login para: ${correo}`);
+
     try {
-        // Buscamos al usuario por correo
         const [rows] = await db.query('SELECT * FROM usuarios WHERE correo = ?', [correo]);
         
         if (rows.length > 0) {
             const usuario = rows[0];
 
-            // 1. Validamos con Bcrypt (Contraseñas encriptadas)
+            // 1. Validamos con Bcrypt
             const match = await bcrypt.compare(password, usuario.password);
             
-            // 2. Validamos texto plano (Solo si en tu DB aún tienes contraseñas sin encriptar)
+            // 2. Validamos texto plano
             const esIgual = (password === usuario.password);
 
-            // ✅ ÚNICAMENTE entra si la contraseña coincide (ya sea encriptada o plano)
             if (match || esIgual) { 
-                req.session.user = usuario;
+                console.log('✅ Credenciales correctas');
                 
-                req.session.save(() => {
+                // Guardamos solo datos necesarios en la sesión
+                req.session.user = {
+                    id: usuario.id,
+                    nombre: usuario.nombre,
+                    correo: usuario.correo,
+                    rol: usuario.rol
+                };
+                
+                req.session.save((err) => {
+                    if (err) {
+                        console.error('❌ Error al guardar sesión:', err);
+                        return res.redirect('/login?error=session_error');
+                    }
+                    
                     const { rol } = usuario;
                     if (rol === 'admin') return res.redirect('/admin/usuarios');
                     if (rol === 'maestro') return res.redirect('/maestro/dashboard');
                     if (rol === 'alumno') return res.redirect('/alumno/perfil');
                 });
             } else {
-                // Contraseña incorrecta
+                console.log('❌ Password incorrecto');
                 res.redirect('/login?error=wrong_password');
             }
         } else {
-            // Usuario no existe
+            console.log('❌ Usuario no encontrado');
             res.redirect('/login?error=user_not_found');
         }
     } catch (err) {
-        console.error('❌ Error en el proceso de Login:', err);
+        console.error('❌ Error CRÍTICO en Login:', err);
         res.redirect('/login?error=server_error');
     }
 });
