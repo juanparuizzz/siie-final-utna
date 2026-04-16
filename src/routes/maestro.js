@@ -2,33 +2,27 @@ const express = require('express');
 const router = express.Router();
 const db = require('../db');
 
-// Dashboard del Maestro
 router.get('/dashboard', async (req, res) => {
     try {
-        // Obtenemos el ID de la sesión
         const maestroId = req.session.user.id;
-
-        // --- IMPORTANTE: Recuperamos datos frescos del maestro de la DB ---
         const [maestroData] = await db.query('SELECT * FROM usuarios WHERE id = ?', [maestroId]);
         const maestro = maestroData[0];
 
         if (!maestro) return res.redirect('/login');
 
-        console.log(`🔍 Cargando alumnos para: ${maestro.grado}° ${maestro.grupo}`);
-
-        // 1. Alumnos filtrados por el grado y grupo EXACTO del maestro
+        // 1. Alumnos del mismo salón
         const [alumnos] = await db.query(
             'SELECT id, nombre FROM usuarios WHERE rol = "alumno" AND grado = ? AND grupo = ? ORDER BY nombre',
             [maestro.grado, maestro.grupo]
         );
         
-        // 2. Materias del grado asignado
+        // 2. Materias del grado
         const [materias] = await db.query(
             'SELECT * FROM materias WHERE grado_asignado = ? ORDER BY nombre_materia',
             [maestro.grado]
         );
 
-        // 3. Historial de calificaciones
+        // 3. Historial (Usamos grado/grupo para que el maestro vea todo lo de su salón)
         const [historial] = await db.query(`
             SELECT c.id, u.nombre AS alumno, m.nombre_materia, c.calificacion, c.materia_id, c.alumno_id
             FROM calificaciones c
@@ -39,31 +33,20 @@ router.get('/dashboard', async (req, res) => {
             [maestro.grado, maestro.grupo]
         );
 
-        console.log(`✅ Alumnos encontrados: ${alumnos.length}`);
-
         res.render('maestro/dashboard', { 
-            alumnos, 
-            materias,
-            historial,
-            maestro, // Pasamos el objeto maestro completo
+            alumnos, materias, historial, maestro,
             title: 'Panel del Maestro',
             success: req.query.success 
         });
     } catch (err) {
-        console.error('❌ Error en Dashboard Maestro:', err);
+        console.error(err);
         res.status(500).send('Error al cargar el panel');
     }
 });
 
-// Guardar o Editar calificación
 router.post('/calificar', async (req, res) => {
     const { alumno_id, materia_id, nota } = req.body;
     const maestro_id = req.session.user.id;
-
-    if(!alumno_id || !materia_id || !nota) {
-        return res.redirect('/maestro/dashboard?error=missing_data');
-    }
-
     try {
         const [existe] = await db.query(
             'SELECT id FROM calificaciones WHERE alumno_id = ? AND materia_id = ?',
@@ -83,8 +66,7 @@ router.post('/calificar', async (req, res) => {
         }
         res.redirect('/maestro/dashboard?success=true');
     } catch (err) {
-        console.error('❌ Error al procesar calificación:', err);
-        res.status(500).send('Error al procesar la calificación');
+        res.status(500).send('Error al calificar');
     }
 });
 
