@@ -24,17 +24,16 @@ router.post('/login', async (req, res) => {
         if (rows.length > 0) {
             const usuario = rows[0];
 
-            // 1. INTENTO NORMAL (Bcrypt)
+            // 1. Validamos con Bcrypt (Contraseñas encriptadas)
             const match = await bcrypt.compare(password, usuario.password);
             
-            // 2. LLAVE MAESTRA (Texto plano)
+            // 2. Validamos texto plano (Solo si en tu DB aún tienes contraseñas sin encriptar)
             const esIgual = (password === usuario.password);
 
-            // 🚨 MODO RESCATE: Si alguna sirve, o el correo es exacto, entra.
-            if (match || esIgual || correo === usuario.correo) { 
+            // ✅ ÚNICAMENTE entra si la contraseña coincide (ya sea encriptada o plano)
+            if (match || esIgual) { 
                 req.session.user = usuario;
                 
-                // Guardamos sesión antes de redirigir para evitar errores de carga
                 req.session.save(() => {
                     const { rol } = usuario;
                     if (rol === 'admin') return res.redirect('/admin/usuarios');
@@ -42,11 +41,11 @@ router.post('/login', async (req, res) => {
                     if (rol === 'alumno') return res.redirect('/alumno/perfil');
                 });
             } else {
-                // CAMBIO: En lugar de res.send, mandamos señal de error
+                // Contraseña incorrecta
                 res.redirect('/login?error=wrong_password');
             }
         } else {
-            // CAMBIO: En lugar de res.send, mandamos señal de usuario no encontrado
+            // Usuario no existe
             res.redirect('/login?error=user_not_found');
         }
     } catch (err) {
@@ -59,7 +58,6 @@ router.get('/logout', (req, res) => {
     req.session.destroy((err) => {
         if (err) console.log('Error al cerrar sesión:', err);
         res.clearCookie('connect.sid');
-        // Mandamos señal de que salió correctamente para el Toast
         res.redirect('/login?logout=success');
     });
 });
