@@ -3,81 +3,40 @@ const router = express.Router();
 const db = require('../db');
 const bcrypt = require('bcrypt');
 
-// --- VISTA DE LOGIN ---
-router.get('/login', (req, res) => {
-    if (req.session.user) {
-        const { rol } = req.session.user;
-        if (rol === 'admin') return res.redirect('/admin/usuarios');
-        if (rol === 'maestro') return res.redirect('/maestro/dashboard');
-        if (rol === 'alumno') return res.redirect('/alumno/perfil');
-    }
-    res.render('login', { title: 'Iniciar Sesión' });
-});
-
-// --- PROCESO DE LOGIN (ESTRICTO) ---
 router.post('/login', async (req, res) => {
-    const correoInput = req.body.correo ? req.body.correo.trim() : '';
-    const passwordInput = req.body.password ? req.body.password.trim() : '';
-    
-    if (!correoInput || !passwordInput) {
-        return res.redirect('/login?error=empty_fields');
-    }
+    const { correo, password } = req.body;
+    console.log("--- INTENTO DE LOGIN ---");
+    console.log("Correo recibido:", correo);
+    console.log("Password recibido:", password);
 
     try {
-        // Buscamos el usuario por el correo exacto
-        const [rows] = await db.query('SELECT * FROM usuarios WHERE correo = ?', [correoInput]);
+        const [rows] = await db.query('SELECT * FROM usuarios WHERE correo = ?', [correo]);
         
         if (rows.length === 0) {
-            console.log(`❌ Intento fallido: El correo [${correoInput}] no existe.`);
-            return res.redirect('/login?error=wrong_credentials');
+            console.log("❌ RESULTADO: El correo no existe en la base de datos.");
+            return res.redirect('/login?error=user_not_found');
         }
 
         const usuario = rows[0];
-        const passwordDB = usuario.password ? usuario.password.trim() : '';
+        console.log("Usuario encontrado en DB:", usuario.correo);
+        console.log("Password en DB:", usuario.password);
 
-        // VALIDACIÓN 1: ¿Es un hash de Bcrypt?
-        let esValidoBcrypt = false;
-        if (passwordDB.startsWith('$2')) {
-            esValidoBcrypt = await bcrypt.compare(passwordInput, passwordDB);
-        }
+        const match = await bcrypt.compare(password, usuario.password);
+        const esIgual = (password === usuario.password);
 
-        // VALIDACIÓN 2: ¿Es texto plano igualito?
-        const esValidoPlano = (passwordInput === passwordDB);
-
-        // SOLO si alguna de las dos validaciones de CONTRASEÑA es correcta, entra.
-        // Ya no comparamos "correo === correo", eso se quitó para siempre.
-        if (esValidoBcrypt || esValidoPlano) { 
-            console.log(`✅ Login exitoso: ${correoInput}`);
-            
-            req.session.user = {
-                id: usuario.id,
-                nombre: usuario.nombre,
-                correo: usuario.correo,
-                rol: usuario.rol
-            };
-            
-            return req.session.save(() => {
-                const { rol } = usuario.rol; // O usuario.rol dependiendo de tu tabla
-                if (usuario.rol === 'admin') return res.redirect('/admin/usuarios');
-                if (usuario.rol === 'maestro') return res.redirect('/maestro/dashboard');
-                if (usuario.rol === 'alumno') return res.redirect('/alumno/perfil');
-            });
+        if (match || esIgual) {
+            console.log("✅ RESULTADO: Contraseña correcta.");
+            req.session.user = usuario;
+            return req.session.save(() => res.redirect('/'));
         } else {
-            console.log(`❌ Contraseña incorrecta para: ${correoInput}`);
-            return res.redirect('/login?error=wrong_credentials');
+            console.log("❌ RESULTADO: La contraseña no coincide.");
+            return res.redirect('/login?error=wrong_password');
         }
-
     } catch (err) {
-        console.error('❌ Error en el servidor durante login:', err);
-        return res.redirect('/login?error=server_error');
+        console.error("❌ ERROR CRÍTICO:", err);
+        res.redirect('/login?error=server_error');
     }
 });
 
-router.get('/logout', (req, res) => {
-    req.session.destroy(() => {
-        res.clearCookie('connect.sid');
-        res.redirect('/login?logout=success');
-    });
-});
-
+// Mantén el resto de tus rutas igual (get login, logout, etc.)
 module.exports = router;
