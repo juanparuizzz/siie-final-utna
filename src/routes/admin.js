@@ -17,7 +17,7 @@ router.get('/usuarios/crear', (req, res) => {
     res.render('admin/crear_usuario', { title: 'Registrar' });
 });
 
-// 3. GUARDAR (Sin validaciones que bloqueen el botón)
+// 3. GUARDAR
 router.post('/usuarios/guardar', async (req, res) => {
     const { nombre, correo, password, rol, grado, grupo } = req.body;
     try {
@@ -33,9 +33,40 @@ router.post('/usuarios/guardar', async (req, res) => {
     }
 });
 
-// 4. EDITAR, ACTUALIZAR Y ELIMINAR (Mantén los que ya tenías abajo...)
-router.get('/usuarios/editar/:id', async (req, res) => { /* Tu código de editar */ });
-router.post('/usuarios/actualizar/:id', async (req, res) => { /* Tu código de actualizar */ });
-router.get('/usuarios/eliminar/:id', async (req, res) => { /* Tu código de eliminar */ });
+// 4. EDITAR (Vista)
+router.get('/usuarios/editar/:id', async (req, res) => {
+    try {
+        const [rows] = await db.query('SELECT * FROM usuarios WHERE id = ?', [req.params.id]);
+        if (rows.length === 0) return res.status(404).send('Usuario no encontrado');
+        res.render('admin/editar_usuario', { usuario: rows[0], title: 'Editar Usuario' });
+    } catch (err) {
+        res.status(500).send('Error al cargar editar');
+    }
+});
+
+// 5. ACTUALIZAR (Proceso)
+router.post('/usuarios/actualizar/:id', async (req, res) => {
+    const { nombre, correo, rol, grado, grupo } = req.body;
+    try {
+        await db.query(
+            'UPDATE usuarios SET nombre = ?, correo = ?, rol = ?, grado = ?, grupo = ? WHERE id = ?',
+            [nombre, correo, rol, grado || null, grupo || 'A', req.params.id]
+        );
+        // El redirect evita que se quede cargando
+        res.redirect('/admin/usuarios?success=updated');
+    } catch (err) {
+        res.status(500).send('Error al actualizar');
+    }
+});
+
+// 6. ELIMINAR
+router.get('/usuarios/eliminar/:id', async (req, res) => {
+    try {
+        await db.query('DELETE FROM usuarios WHERE id = ?', [req.params.id]);
+        res.redirect('/admin/usuarios?success=deleted');
+    } catch (err) {
+        res.status(500).send('Error al eliminar');
+    }
+});
 
 module.exports = router;
