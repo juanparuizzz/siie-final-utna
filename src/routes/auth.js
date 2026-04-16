@@ -1,11 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const bcrypt = require('bcrypt');
 
 // --- VISTA DE LOGIN ---
 router.get('/login', (req, res) => {
-    // Si ya está logueado, mandarlo a su dashboard
     if (req.session.user) {
         const { rol } = req.session.user;
         if (rol === 'admin') return res.redirect('/admin/usuarios');
@@ -15,9 +13,11 @@ router.get('/login', (req, res) => {
     res.render('login', { title: 'Iniciar Sesión' });
 });
 
-// --- PROCESO DE LOGIN ---
+// --- PROCESO DE LOGIN (COMPARACIÓN DIRECTA) ---
 router.post('/login', async (req, res) => {
-    const { correo, password } = req.body;
+    const correo = req.body.correo ? req.body.correo.trim() : '';
+    const password = req.body.password ? req.body.password.trim() : '';
+    
     console.log("--- INTENTO DE LOGIN ---");
     console.log("Correo recibido:", correo);
 
@@ -30,38 +30,46 @@ router.post('/login', async (req, res) => {
         }
 
         const usuario = rows[0];
+        // Convertimos a string y quitamos espacios por si acaso
+        const passDB = usuario.password ? usuario.password.toString().trim() : '';
+
         console.log("Usuario encontrado en DB:", usuario.correo);
 
-        // Comprobación de contraseña (Bcrypt o Texto Plano)
-        const match = await bcrypt.compare(password, usuario.password);
-        const esIgual = (password === usuario.password);
-
-        if (match || esIgual) {
+        // COMPARACIÓN DIRECTA: Texto plano contra texto plano
+        if (password === passDB) {
             console.log("✅ RESULTADO: Contraseña correcta.");
             
-            // Guardamos el objeto usuario completo en la sesión
-            req.session.user = usuario;
+            // Guardamos el objeto usuario en la sesión
+            req.session.user = {
+                id: usuario.id,
+                nombre: usuario.nombre,
+                correo: usuario.correo,
+                rol: usuario.rol
+            };
 
             return req.session.save((err) => {
                 if (err) {
                     console.error("Error al guardar sesión:", err);
                     return res.redirect('/login?error=server_error');
                 }
-                const { rol } = usuario;
-                console.log("Redirigiendo por rol:", rol);
+                
+                const rol = usuario.rol;
+                console.log("Redirigiendo al dashboard de:", rol);
+                
                 if (rol === 'admin') return res.redirect('/admin/usuarios');
                 if (rol === 'maestro') return res.redirect('/maestro/dashboard');
                 if (rol === 'alumno') return res.redirect('/alumno/perfil');
                 
-                // Si no tiene rol conocido, a la raíz
                 res.redirect('/');
             });
         } else {
             console.log("❌ RESULTADO: La contraseña no coincide.");
+            // Log de ayuda para ti (puedes quitarlo después de que funcione)
+            console.log(`Debug: Recibido [${password}] vs DB [${passDB}]`);
             return res.redirect('/login?error=wrong_password');
         }
     } catch (err) {
-        console.error("❌ ERROR CRÍTICO EN AUTH:", err);
+        console.error("❌ ERROR EN EL LOGIN:", err);
         res.redirect('/login?error=server_error');
     }
 });
